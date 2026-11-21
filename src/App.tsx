@@ -22,6 +22,10 @@ import {
   AlertCircle,
   LogOut,
   Lock,
+  Plus,
+  X,
+  SlidersHorizontal,
+  RotateCcw,
 } from 'lucide-react';
 import {
   auth,
@@ -423,6 +427,7 @@ export default function App() {
         <div className="p-6 md:p-8 max-w-7xl mx-auto">
           {activeTab === 'social' && (
             <SocialStudio
+              userId={user.uid}
               callGeminiText={callGeminiText}
               handleCopy={handleCopy}
               copiedId={copiedId}
@@ -455,7 +460,23 @@ export default function App() {
 // ----------------------------------------------------------------------
 // TAB 1: STUDIO RÉSEAUX SOCIAUX
 // ----------------------------------------------------------------------
+const DEFAULT_SOCIAL_SYSTEM_PROMPT = `Tu es l'assistant marketing de l'Auberge Ramstein à Scherwiller (Alsace). L'auberge propose une cuisine gastronomique authentique, des chambres douillettes et un cadre chaleureux au cœur des vignes de Scherwiller.
+Rédige un post engageant, convivial et gourmand pour Instagram & Facebook. Inclus des emojis adaptés et termine avec une incitation chaleureuse à la réservation (ex: lien en bio / réservation sur notre site).
+Conserve un ton raffiné mais accessible.`;
+
+const DEFAULT_HASHTAGS = [
+  '#AubergeRamstein',
+  '#Scherwiller',
+  '#GastronomieAlsace',
+  '#RoutedesVins',
+  '#FaitMaison',
+  '#AlsaceGourmande',
+  '#HotelAlsace',
+  '#LogisdeFrance',
+];
+
 interface SocialStudioProps {
+  userId: string;
   callGeminiText: (opts: CallGeminiOptions) => Promise<string>;
   handleCopy: (text: string, id: string) => void;
   copiedId: string | null;
@@ -463,32 +484,72 @@ interface SocialStudioProps {
 }
 
 function SocialStudio({
+  userId,
   callGeminiText,
   handleCopy,
   copiedId,
   showToast,
 }: SocialStudioProps) {
+  const promptStorageKey = `ramstein_social_prompt_${userId}`;
+  const hashtagsStorageKey = `ramstein_custom_hashtags_${userId}`;
+
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [contentType, setContentType] = useState<ContentType>('food');
   const [customPrompt, setCustomPrompt] = useState('');
+  const [systemPrompt, setSystemPrompt] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(promptStorageKey);
+      return saved && saved.trim() ? saved : DEFAULT_SOCIAL_SYSTEM_PROMPT;
+    } catch {
+      return DEFAULT_SOCIAL_SYSTEM_PROMPT;
+    }
+  });
+  const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [generatedCaption, setGeneratedCaption] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [hashtags] = useState([
+
+  const [customHashtags, setCustomHashtags] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(hashtagsStorageKey);
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed)
+        ? parsed.filter((t): t is string => typeof t === 'string')
+        : [];
+    } catch {
+      return [];
+    }
+  });
+  const [newHashtag, setNewHashtag] = useState('');
+  const [selectedHashtags, setSelectedHashtags] = useState<string[]>([
     '#AubergeRamstein',
     '#Scherwiller',
     '#GastronomieAlsace',
-    '#RoutedesVins',
-    '#FaitMaison',
-    '#AlsaceGourmande',
-    '#HotelAlsace',
-    '#LogisdeFrance',
   ]);
-  const [selectedHashtags, setSelectedHashtags] = useState([
-    '#AubergeRamstein',
-    '#Scherwiller',
-    '#GastronomieAlsace',
-  ]);
+
+  const allHashtags = [...DEFAULT_HASHTAGS, ...customHashtags];
+  const isPromptCustomized =
+    systemPrompt.trim() !== DEFAULT_SOCIAL_SYSTEM_PROMPT.trim();
+
+  const updateSystemPrompt = (value: string) => {
+    setSystemPrompt(value);
+    try {
+      localStorage.setItem(promptStorageKey, value);
+    } catch {
+      // Ignore storage errors
+    }
+  };
+
+  const resetSystemPrompt = () => {
+    setSystemPrompt(DEFAULT_SOCIAL_SYSTEM_PROMPT);
+    try {
+      localStorage.removeItem(promptStorageKey);
+    } catch {
+      // Ignore storage errors
+    }
+    showToast('Prompt de communication réinitialisé.');
+  };
 
   const presets: Record<ContentType, string> = {
     food: 'Assiette gastronomique, filet de cerf, spaetzles maison, jus réduit et morilles. Présentation élégante.',
@@ -519,13 +580,74 @@ function SocialStudio({
     }
   };
 
+  const handleAddHashtag = () => {
+    const rawTokens = newHashtag
+      .split(/[\s,;]+/)
+      .map((token) => token.trim())
+      .filter(Boolean);
+
+    if (rawTokens.length === 0) return;
+
+    const added: string[] = [];
+    const nextCustom = [...customHashtags];
+    const nextSelected = [...selectedHashtags];
+
+    for (const token of rawTokens) {
+      const cleaned = token.replace(/^#+/, '').replace(/[^\p{L}\p{N}_]/gu, '');
+      if (!cleaned) continue;
+      const formatted = `#${cleaned}`;
+      const existsInAll = [...DEFAULT_HASHTAGS, ...nextCustom].some(
+        (existing) => existing.toLowerCase() === formatted.toLowerCase()
+      );
+
+      if (!existsInAll) {
+        nextCustom.push(formatted);
+        added.push(formatted);
+      }
+
+      const matchingExisting = [...DEFAULT_HASHTAGS, ...nextCustom].find(
+        (existing) => existing.toLowerCase() === formatted.toLowerCase()
+      );
+      if (matchingExisting && !nextSelected.includes(matchingExisting)) {
+        nextSelected.push(matchingExisting);
+      }
+    }
+
+    if (added.length > 0) {
+      setCustomHashtags(nextCustom);
+      try {
+        localStorage.setItem(hashtagsStorageKey, JSON.stringify(nextCustom));
+      } catch {
+        // Ignore storage errors
+      }
+      showToast(
+        added.length === 1
+          ? `Hashtag ${added[0]} ajouté !`
+          : `${added.length} hashtags ajoutés !`
+      );
+    }
+
+    setSelectedHashtags(nextSelected);
+    setNewHashtag('');
+  };
+
+  const handleRemoveCustomHashtag = (tag: string) => {
+    const nextCustom = customHashtags.filter((t) => t !== tag);
+    setCustomHashtags(nextCustom);
+    setSelectedHashtags((prev) => prev.filter((t) => t !== tag));
+    try {
+      localStorage.setItem(hashtagsStorageKey, JSON.stringify(nextCustom));
+    } catch {
+      // Ignore storage errors
+    }
+  };
+
   const generateSocialPost = async () => {
     setIsGenerating(true);
     setErrorMsg('');
     const details = customPrompt.trim() || presets[contentType];
-    const systemInstruction = `Tu es l'assistant marketing de l'Auberge Ramstein à Scherwiller (Alsace). L'auberge propose une cuisine gastronomique authentique, des chambres douillettes et un cadre chaleureux au cœur des vignes de Scherwiller.
-Rédige un post engageant, convivial et gourmand pour Instagram & Facebook. Inclus des emojis adaptés et termine avec une incitation chaleureuse à la réservation (ex: lien en bio / réservation sur notre site).
-Conserve un ton raffiné mais accessible.`;
+    const systemInstruction =
+      systemPrompt.trim() || DEFAULT_SOCIAL_SYSTEM_PROMPT;
 
     const prompt = `Crée un post pour les réseaux sociaux sur le sujet suivant : ${details}. Type de contenu : ${contentType}.${
       selectedImage
@@ -645,28 +767,123 @@ Conserve un ton raffiné mais accessible.`;
             />
           </div>
 
+          {/* Custom Communication Prompt */}
+          <div className="bg-stone-900/60 border border-stone-800 rounded-xl p-3.5 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setShowPromptEditor((prev) => !prev)}
+                className="flex items-center gap-2 text-xs font-medium text-stone-300 hover:text-amber-300 transition-colors"
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5 text-amber-500" />
+                <span>Prompt de communication (ton &amp; consignes IA)</span>
+                {isPromptCustomized && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-600/20 text-amber-300 border border-amber-600/40">
+                    Personnalisé
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowPromptEditor((prev) => !prev)}
+                className="text-[11px] text-amber-400 hover:text-amber-300 font-medium"
+              >
+                {showPromptEditor ? 'Masquer' : 'Modifier'}
+              </button>
+            </div>
+
+            {showPromptEditor && (
+              <div className="space-y-2 pt-1">
+                <textarea
+                  rows={4}
+                  value={systemPrompt}
+                  onChange={(e) => updateSystemPrompt(e.target.value)}
+                  placeholder="Décrivez le ton, la langue, le style éditorial et l'appel à l'action..."
+                  className="w-full bg-stone-950 border border-stone-800 rounded-lg p-2.5 text-xs text-stone-200 placeholder-stone-600 focus:outline-none focus:border-amber-600 leading-relaxed"
+                />
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-stone-500">
+                    Sauvegardé automatiquement pour vos prochains posts.
+                  </span>
+                  {isPromptCustomized && (
+                    <button
+                      type="button"
+                      onClick={resetSystemPrompt}
+                      className="text-[11px] text-stone-400 hover:text-stone-200 inline-flex items-center gap-1"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      <span>Réinitialiser</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Hashtags Selection */}
-          <div>
-            <label className="block text-xs font-medium text-stone-400 mb-2">
+          <div className="space-y-2.5">
+            <label className="block text-xs font-medium text-stone-400">
               Hashtags recommandés (cliquer pour activer/désactiver)
             </label>
             <div className="flex flex-wrap gap-2">
-              {hashtags.map((tag) => {
+              {allHashtags.map((tag) => {
                 const isActive = selectedHashtags.includes(tag);
+                const isCustom = !DEFAULT_HASHTAGS.includes(tag);
                 return (
-                  <button
+                  <div
                     key={tag}
-                    onClick={() => toggleHashtag(tag)}
-                    className={`text-xs px-2.5 py-1 rounded-full transition-all border ${
+                    className={`inline-flex items-center rounded-full border text-xs transition-all ${
                       isActive
                         ? 'bg-amber-600/20 text-amber-300 border-amber-600/40'
                         : 'bg-stone-900 text-stone-500 border-stone-800 hover:border-stone-700'
                     }`}
                   >
-                    {tag}
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleHashtag(tag)}
+                      className={`py-1 ${isCustom ? 'pl-2.5 pr-1.5' : 'px-2.5'}`}
+                    >
+                      {tag}
+                    </button>
+                    {isCustom && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveCustomHashtag(tag)}
+                        title={`Supprimer ${tag}`}
+                        className="pr-2 pl-0.5 py-1 text-stone-400 hover:text-red-300"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
                 );
               })}
+            </div>
+
+            {/* Add custom hashtag input */}
+            <div className="flex gap-2 pt-1">
+              <input
+                type="text"
+                value={newHashtag}
+                onChange={(e) => setNewHashtag(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddHashtag();
+                  }
+                }}
+                placeholder="Ajouter un hashtag (ex: #Riesling ou TerroirAlsace)"
+                className="flex-1 bg-stone-900 border border-stone-800 rounded-xl px-3 py-2 text-xs text-stone-200 placeholder-stone-600 focus:outline-none focus:border-amber-600"
+              />
+              <button
+                type="button"
+                onClick={handleAddHashtag}
+                disabled={!newHashtag.trim()}
+                className="px-3.5 py-2 bg-stone-900 hover:bg-stone-800 text-amber-400 border border-stone-700 rounded-xl text-xs font-medium inline-flex items-center gap-1.5 transition-all disabled:opacity-40"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Ajouter</span>
+              </button>
             </div>
           </div>
 
